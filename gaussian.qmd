@@ -1,0 +1,217 @@
+---
+title: "Testing Kernel methods"
+author: "Jieming You"
+date: today
+
+header-includes:
+   - \usepackage{mathtools}
+
+monofont: "Monaco"
+
+format: 
+  pdf:
+    highlight-style: github
+    code-block-bg: "#f7f7f7"
+    toc: true
+    number-sections: false
+    
+editor: visual
+---
+
+# Testing convolution filters
+
+## Loading packages
+
+```{r}
+#| output: false
+#| warning: false
+library(jpeg)     # For loading jpeg into matrix
+library(grid)     
+library(raster)   # For plotting
+library(magrittr)
+```
+
+## Loading image
+
+```{r}
+img <- readJPEG("wall.jpg", native = FALSE)
+dim(img)
+```
+
+500 x 500 pixels, three channels per pixel
+
+```{r}
+plot(as.raster(img))
+```
+
+2D Gaussian function is defined as
+
+$$
+G(x,y) = \frac{1}{2 \pi \sigma ^2} e^{- \frac{x^2 + y^2}{2 \sigma ^2}}
+$$
+
+where the x and y are delta from the pixel. For example, if we're calculating the gaussian kernel for (0, 0), kernel radius of 3 would yield an x and y ranging from -3 to 3.
+
+## Computing 2-D Gaussian Kernel
+
+```{r}
+# w = width
+# s = sigma
+gaussian_kernel <- function(w, s) {
+  if (w%%2 != 1) { stop("Length must be an odd number") } # Odd Check
+  
+  # Boundaries
+  right  <- (w-1)/2
+  left <- -right
+  
+  # Setting up the linspace
+  ax <- seq(left, right, length=w)
+  
+  # Draw from gaussian cdf
+  gauss <- dnorm(ax, sd = s)
+  
+  # Outer product to form a kernel matrix
+  kernel <- outer(gauss, gauss)
+  kernel <- kernel / sum(kernel)
+  
+  return(kernel)
+}
+
+gaussian_kernel(3, 0.5)
+```
+
+## Function for padding matrices using edge extension
+
+```{r}
+matrix_padding <- function(mat, pad) {
+  m <- ncol(mat)
+  n <- nrow(mat)
+  top <- c( rep(mat[1,1], pad), mat[1,], rep(mat[1,m], pad) )
+  bot <- c( rep(mat[n,1], pad), mat[n,], rep(mat[n,m], pad) )
+  left <- matrix(rep(mat[1:n, 1], pad), ncol=pad)
+  right <- matrix(rep(mat[1:n, m], pad), ncol=pad)
+  mid <- cbind( left, mat[1:n,], right)
+
+  new_mat <- rbind( matrix(rep(top, pad), nrow=pad, byrow=TRUE),
+                    mid,
+                    matrix(rep(bot, pad), nrow=pad, byrow=TRUE))
+  return(new_mat)
+}
+
+matrix_padding(matrix(1:9, ncol=3, byrow=T), pad=3) %>%
+  write.table(row.names=F, col.names=F)
+```
+
+## Function for the rolling kernel method with extended edge handling
+
+```{r}
+rolling_kernel <- function(source, kernel) {
+  
+  x <- ncol(source)
+  y <- nrow(source)
+  m <- ncol(kernel)
+  n <- nrow(kernel)
+  mmid <- (m-1)/2
+  nmid <- (n-1)/2
+  mmid2 <- 2*mmid
+  nmid2 <- 2*nmid
+  output <- source
+  
+  # Kernel dimensions exceed the source
+  if (m > x ||  n  > y) {
+    stop("Kernel length exceeds the source")
+  }
+  
+  source_extended <- matrix_padding(source, mmid)
+  
+  for (i in 1:x) {
+    for (j in 1:y) {
+      # i + pad - pad ---> i + pad + pad
+      # j + pad - pad ---> i - pad + pad
+      source_kernel <- source_extended[(i):(i+mmid2), j:(j+nmid2)]
+      out_kernel <- source_kernel * kernel
+      output[i, j] <- sum(out_kernel)
+    }
+  }
+  return( output )
+}
+```
+
+## Main wrapper function
+
+```{r}
+gaussian_blur <- function(image, width, sigma) {
+  kernel_gaussian <- gaussian_kernel(width, sigma)
+  channels <- dim(image)[3]
+  output <- image
+  for (c in 1:channels) {
+    output[,,c] <- rolling_kernel(image[,,c], kernel_gaussian)
+  }
+  return(output)
+}
+```
+
+## Applying the Gaussian Blur
+
+```{r}
+img_gaussian <- gaussian_blur(img, width = 41, sigma = 3)
+img_gaussian2 <- gaussian_blur(img, width = 61, sigma = 7)
+
+# Plot
+par(mfrow=c(1,3))
+plot(as.raster(img))
+mtext("Original image")
+plot(as.raster(img_gaussian))
+mtext(expression(atop(Gaussian~kernel~convolution, w~"="~41~and~sigma^2~"="~3)),
+      col="red")
+plot(as.raster(img_gaussian2))
+mtext(expression(atop(Gaussian~kernel~convolution, w~"="~61~and~sigma^2~"="~5)),
+      col="red")
+```
+
+## Inverse filtering the Gaussian blur
+
+```{r}
+kernel <- gaussian_kernel(w=61, s=5)
+
+reverse_blur <- function(source, kernel) {
+  output <- source
+  x <- ncol(source)
+  y <- nrow(source)
+  m <- ncol(kernel)
+  n <- nrow(kernel)
+  mmid <- (m-1)/2
+  nmid <- (n-1)/2
+  
+  source_padded <- matrix_padding(source, m)
+  
+  for (col in 1:x) {
+    for (row in 1:y) {
+      pixel <- source_padded[(1+m),(1+m)]
+      original_kernel <- blurred_pixel / kernel
+    }
+  }
+}
+```
+
+```{r}
+# Gaussian Kernel
+k <- gaussian_kernel(w=3, s=0.5)
+k
+
+# Image kenrel
+img_kernel <- img[,,1][3:5, 3:5]
+img_kernel
+
+# Blurred kernel
+blurred_kernel <- k *  img_kernel
+blurred_kernel
+
+# Blurred pixel
+blurred_pixel <- sum(blurred_kernel)
+blurred_pixel
+
+# Reverse blurred kernel
+k_inv <- 1/k
+blurred_pixel * k_inv / sum( blurred_pixel * k_inv )
+```
