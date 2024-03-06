@@ -1,4 +1,4 @@
-# gaussian-bluR
+# Base R kernel convolution implementation
 
 Gaussian blur base R implementation using Kernel convolutions
 
